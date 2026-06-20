@@ -264,7 +264,7 @@ with col_lista:
     for p in pedidos:
         st.markdown(f"""
         <div class="pedido-card">
-            <strong>Pedido #{p['id']}</strong><br>
+            <strong style="color:#333">Pedido #{p['id']}</strong><br>
             <span style="color:#6B7280; font-size:0.9rem;">{p['direccion']}</span>
         </div>
         """, unsafe_allow_html=True)
