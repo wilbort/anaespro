@@ -5,7 +5,6 @@ import random
 import math
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 
 # ── Configuración de página ──────────────────────────────────────────────────
@@ -30,12 +29,13 @@ st.markdown("""
     }
     .metric-value { font-size: 2rem; font-weight: 700; margin: 4px 0; }
     .metric-label { font-size: 0.8rem; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em; }
-    .algo-badge {
-        display: inline-block;
-        padding: 3px 10px;
-        border-radius: 99px;
-        font-size: 0.75rem;
-        font-weight: 600;
+    .pedido-card {
+        background: white;
+        border-radius: 10px;
+        padding: 12px 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        border-left: 4px solid #F59E0B;
+        margin-bottom: 8px;
     }
     .section-title {
         font-size: 1.1rem;
@@ -46,6 +46,12 @@ st.markdown("""
     .stAlert { border-radius: 10px; }
 </style>
 """, unsafe_allow_html=True)
+
+# ── Datos de simulación: zonas y calles para generar direcciones ─────────────
+DISTRITOS = ["Los Olivos", "San Isidro", "Miraflores", "La Victoria", "Surco",
+             "Comas", "San Borja", "Barranco", "Jesús María", "Pueblo Libre"]
+CALLES = ["Av. Los Álamos", "Jr. Las Flores", "Av. Universitaria", "Calle Real",
+          "Av. Brasil", "Jr. Lima", "Av. Arequipa", "Calle Los Pinos", "Av. Salaverry"]
 
 # ── Algoritmos ───────────────────────────────────────────────────────────────
 def calcular_distancia_ruta(ruta, matriz):
@@ -133,94 +139,163 @@ def generar_matriz_aleatoria(n, seed=42):
             m[j][i] = d
     return m
 
+# ── Generación de pedidos simulados ───────────────────────────────────────────
+def generar_pedidos(num_pedidos, seed=None):
+    """Genera pedidos aleatorios con dirección simulada y coordenadas en el mapa."""
+    if seed is not None:
+        random.seed(seed)
+    pedidos = []
+    for i in range(num_pedidos):
+        distrito = random.choice(DISTRITOS)
+        calle = random.choice(CALLES)
+        numero = random.randint(100, 2500)
+        pedidos.append({
+            "id": i + 1,
+            "direccion": f"{calle} {numero}, {distrito}",
+            "distrito": distrito,
+            "x": random.uniform(0.1, 0.9),
+            "y": random.uniform(0.1, 0.9)
+        })
+    return pedidos
+
+def construir_matriz_desde_pedidos(pedidos):
+    """Construye una matriz de distancias euclidianas a partir de coordenadas (almacén + pedidos)."""
+    puntos = [(0.5, 0.95)] + [(p["x"], p["y"]) for p in pedidos]  # almacén arriba al centro
+    n = len(puntos)
+    matriz = [[0.0]*n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                dx = puntos[i][0] - puntos[j][0]
+                dy = puntos[i][1] - puntos[j][1]
+                matriz[i][j] = round(((dx**2 + dy**2) ** 0.5) * 30, 1)  # escalado a "km" ficticios
+    return matriz, puntos
+
 # ── Visualización de ruta en mapa ─────────────────────────────────────────────
-def graficar_ruta(ruta, ciudades, coords, color, titulo):
+def graficar_pedidos(puntos, etiquetas):
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.set_facecolor('#F0F4F8')
+    fig.patch.set_facecolor('#F0F4F8')
+    for i, (x, y) in enumerate(puntos):
+        c = '#1D4ED8' if i == 0 else '#F59E0B'
+        s = 260 if i == 0 else 160
+        ax.scatter(x, y, s=s, color=c, zorder=5, edgecolors='white', linewidths=1.5)
+        ax.annotate(etiquetas[i], (x, y), textcoords="offset points",
+                    xytext=(0, 12), ha='center', fontsize=9, fontweight='600', color='#111827')
+    ax.set_title("📦 Pedidos generados", fontsize=12, fontweight='700', color='#111827', pad=10)
+    ax.axis('off')
+    plt.tight_layout()
+    return fig
+
+def graficar_ruta(ruta, etiquetas, coords, color, titulo):
     fig, ax = plt.subplots(figsize=(5, 4))
     ax.set_facecolor('#F0F4F8')
     fig.patch.set_facecolor('#F0F4F8')
-
-    # Dibujar aristas de la ruta
     ruta_completa = ruta + [ruta[0]]
     for i in range(len(ruta_completa) - 1):
         a, b = ruta_completa[i], ruta_completa[i+1]
         ax.annotate("", xy=coords[b], xytext=coords[a],
                     arrowprops=dict(arrowstyle="->", color=color, lw=1.8))
-
-    # Dibujar nodos
     for i, (x, y) in enumerate(coords):
         c = '#1D4ED8' if i == 0 else '#F59E0B'
         ax.scatter(x, y, s=180, color=c, zorder=5, edgecolors='white', linewidths=1.5)
-        ax.annotate(ciudades[i], (x, y), textcoords="offset points",
+        ax.annotate(etiquetas[i], (x, y), textcoords="offset points",
                     xytext=(0, 10), ha='center', fontsize=8, fontweight='600', color='#111827')
-
     ax.set_title(titulo, fontsize=10, fontweight='700', color='#111827', pad=10)
     ax.axis('off')
     plt.tight_layout()
     return fig
 
+# ── Estado de sesión ───────────────────────────────────────────────────────────
+if "pedidos" not in st.session_state:
+    st.session_state.pedidos = None
+if "resultados" not in st.session_state:
+    st.session_state.resultados = None
+
 # ── Header ───────────────────────────────────────────────────────────────────
 st.markdown("## 🚚 Optimización de Rutas de Delivery")
-st.markdown("Compara **Fuerza Bruta**, **Algoritmo Voraz** y **Programación Dinámica** para encontrar la ruta más corta.")
+st.markdown("Simula pedidos de clientes y compara **Fuerza Bruta**, **Algoritmo Voraz** y **Programación Dinámica** para encontrar la ruta más corta.")
 st.divider()
 
 # ── Sidebar: configuración ────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ Configuración")
-    modo = st.radio("Modo de datos", ["Ejemplo predefinido", "Personalizado"])
-
-    if modo == "Ejemplo predefinido":
-        ciudades = ['Almacén', 'Los Olivos', 'San Isidro', 'Miraflores', 'La Victoria', 'Surco']
-        distancias = [
-            [0,  12, 18, 22, 10, 25],
-            [12,  0, 15, 20,  8, 22],
-            [18, 15,  0,  7, 11, 14],
-            [22, 20,  7,  0, 13, 10],
-            [10,  8, 11, 13,  0, 18],
-            [25, 22, 14, 10, 18,  0]
-        ]
-        coords = [(0.2,0.8),(0.1,0.5),(0.5,0.9),(0.7,0.7),(0.4,0.4),(0.8,0.3)]
-    else:
-        n_ciudades = st.slider("Número de ciudades", 4, 8, 5)
-        seed = st.number_input("Semilla aleatoria", value=42, step=1)
-        distancias = generar_matriz_aleatoria(n_ciudades, int(seed))
-        ciudades = [f"Ciudad {i}" if i > 0 else "Almacén" for i in range(n_ciudades)]
-        random.seed(int(seed) + 99)
-        coords = [(random.uniform(0.1, 0.9), random.uniform(0.1, 0.9)) for _ in range(n_ciudades)]
+    num_pedidos = st.slider("Número de pedidos a generar", 4, 9, 6)
 
     st.divider()
+    st.markdown("### 1️⃣ Generar pedidos")
+    if st.button("🎲 Generar pedidos", use_container_width=True, type="primary"):
+        st.session_state.pedidos = generar_pedidos(num_pedidos)
+        st.session_state.resultados = None  # limpiamos resultados anteriores
+
+    st.divider()
+    st.markdown("### 2️⃣ Calcular ruta")
     algoritmos_sel = st.multiselect(
         "Algoritmos a ejecutar",
         ["Fuerza Bruta", "Algoritmo Voraz", "Programación Dinámica"],
         default=["Fuerza Bruta", "Algoritmo Voraz", "Programación Dinámica"]
     )
-    ejecutar = st.button("▶ Ejecutar", use_container_width=True, type="primary")
+    buscar_ruta = st.button(
+        "🚀 Buscar ruta óptima",
+        use_container_width=True,
+        disabled=(st.session_state.pedidos is None)
+    )
+    if st.session_state.pedidos is None:
+        st.caption("⚠️ Primero genera los pedidos.")
 
-# ── Matriz de distancias ──────────────────────────────────────────────────────
-with st.expander("📋 Ver matriz de distancias", expanded=False):
-    df_mat = pd.DataFrame(distancias, index=ciudades, columns=ciudades)
-    st.dataframe(df_mat.style.highlight_min(axis=None, color='#D1FAE5')
-                              .highlight_max(axis=None, color='#FEE2E2'), use_container_width=True)
+# ── Si no hay pedidos generados ────────────────────────────────────────────────
+if st.session_state.pedidos is None:
+    st.info("👈 Usa el panel izquierdo para **generar pedidos** y luego buscar la ruta óptima.")
+    st.stop()
 
-# ── Ejecución ─────────────────────────────────────────────────────────────────
-if ejecutar:
+pedidos = st.session_state.pedidos
+matriz, puntos = construir_matriz_desde_pedidos(pedidos)
+etiquetas = ["Almacén"] + [f"Pedido {p['id']}" for p in pedidos]
+
+# ── Mostrar pedidos generados ──────────────────────────────────────────────────
+st.markdown("### 📦 Pedidos generados")
+col_mapa, col_lista = st.columns([1.2, 1])
+
+with col_mapa:
+    fig = graficar_pedidos(puntos, etiquetas)
+    st.pyplot(fig, use_container_width=True)
+
+with col_lista:
+    for p in pedidos:
+        st.markdown(f"""
+        <div class="pedido-card">
+            <strong>Pedido #{p['id']}</strong><br>
+            <span style="color:#6B7280; font-size:0.9rem;">{p['direccion']}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+with st.expander("📋 Ver matriz de distancias generada (km estimados)", expanded=False):
+    df_mat = pd.DataFrame(matriz, index=etiquetas, columns=etiquetas)
+    st.dataframe(df_mat.style.highlight_min(axis=None, color='#D1FAE5'), use_container_width=True)
+
+st.divider()
+
+# ── Ejecutar algoritmos ────────────────────────────────────────────────────────
+if buscar_ruta:
     resultados = {}
-
     if "Fuerza Bruta" in algoritmos_sel:
         t0 = time.time()
-        ruta, dist = fuerza_bruta(distancias)
-        resultados["Fuerza Bruta"] = {"ruta": ruta, "dist": dist, "tiempo": time.time()-t0, "color": "#EF4444"}
-
+        ruta, dist = fuerza_bruta(matriz)
+        resultados["Fuerza Bruta"] = {"ruta": ruta, "dist": round(dist,1), "tiempo": time.time()-t0, "color": "#EF4444"}
     if "Algoritmo Voraz" in algoritmos_sel:
         t0 = time.time()
-        ruta, dist = algoritmo_voraz(distancias)
-        resultados["Algoritmo Voraz"] = {"ruta": ruta, "dist": dist, "tiempo": time.time()-t0, "color": "#10B981"}
-
+        ruta, dist = algoritmo_voraz(matriz)
+        resultados["Algoritmo Voraz"] = {"ruta": ruta, "dist": round(dist,1), "tiempo": time.time()-t0, "color": "#10B981"}
     if "Programación Dinámica" in algoritmos_sel:
         t0 = time.time()
-        ruta, dist = programacion_dinamica(distancias)
-        resultados["Programación Dinámica"] = {"ruta": ruta, "dist": dist, "tiempo": time.time()-t0, "color": "#3B82F6"}
+        ruta, dist = programacion_dinamica(matriz)
+        resultados["Programación Dinámica"] = {"ruta": ruta, "dist": round(dist,1), "tiempo": time.time()-t0, "color": "#3B82F6"}
+    st.session_state.resultados = resultados
 
-    # Métricas resumen
+# ── Mostrar resultados si existen ──────────────────────────────────────────────
+if st.session_state.resultados:
+    resultados = st.session_state.resultados
+
     st.markdown("### 📊 Resultados")
     cols = st.columns(len(resultados))
     dist_optima = min(v["dist"] for v in resultados.values())
@@ -241,23 +316,21 @@ if ejecutar:
 
     st.divider()
 
-    # Mapas de rutas
     st.markdown("### 🗺️ Rutas encontradas")
     map_cols = st.columns(len(resultados))
     for col, (nombre, datos) in zip(map_cols, resultados.items()):
         with col:
-            fig = graficar_ruta(datos["ruta"], ciudades, coords, datos["color"], nombre)
+            fig = graficar_ruta(datos["ruta"], etiquetas, puntos, datos["color"], nombre)
             st.pyplot(fig, use_container_width=True)
-            ruta_texto = " → ".join([ciudades[i] for i in datos["ruta"]]) + f" → {ciudades[0]}"
+            ruta_texto = " → ".join([etiquetas[i] for i in datos["ruta"]]) + f" → {etiquetas[0]}"
             st.caption(ruta_texto)
 
     st.divider()
 
-    # Tabla detallada
     st.markdown("### 📋 Tabla comparativa")
     tabla = []
     for nombre, datos in resultados.items():
-        diferencia = datos["dist"] - dist_optima
+        diferencia = round(datos["dist"] - dist_optima, 1)
         tabla.append({
             "Algoritmo": nombre,
             "Distancia (km)": datos["dist"],
@@ -269,9 +342,8 @@ if ejecutar:
 
     st.divider()
 
-    # Análisis empírico
-    st.markdown("### 📈 Análisis empírico: tiempo vs número de ciudades")
-    st.caption("Matrices de distancias aleatorias — fuerza bruta limitada a n ≤ 10 por su complejidad O(n!)")
+    st.markdown("### 📈 Análisis empírico: tiempo vs número de pedidos")
+    st.caption("Matrices de distancias aleatorias — fuerza bruta limitada por su complejidad O(n!)")
 
     tamanos = [4, 5, 6, 7, 8, 9, 10]
     filas = []
@@ -287,12 +359,11 @@ if ejecutar:
             t0 = time.time(); programacion_dinamica(m); fila["Prog. Dinámica (s)"] = round(time.time()-t0, 6)
         filas.append(fila)
         prog.progress((idx+1)/len(tamanos), text=f"Calculando n={n}...")
-
     prog.empty()
+
     df_emp = pd.DataFrame(filas)
     st.dataframe(df_emp, use_container_width=True, hide_index=True)
 
-    # Gráfica
     fig2, ax2 = plt.subplots(figsize=(9, 4))
     ax2.set_facecolor('#F7F8FA')
     fig2.patch.set_facecolor('#F7F8FA')
@@ -303,13 +374,12 @@ if ejecutar:
         if col_name in df_emp.columns:
             ax2.plot(df_emp["n"], df_emp[col_name], marker=marcadores[col_name],
                      label=labels[col_name], color=color, linewidth=2.2, markersize=7)
-    ax2.set_xlabel("Número de ciudades (n)", fontsize=11)
+    ax2.set_xlabel("Número de pedidos (n)", fontsize=11)
     ax2.set_ylabel("Tiempo de ejecución (s)", fontsize=11)
     ax2.set_title("Comparativa de tiempos de ejecución", fontsize=13, fontweight='700')
     ax2.legend(fontsize=10)
     ax2.grid(True, linestyle='--', alpha=0.5)
     plt.tight_layout()
     st.pyplot(fig2, use_container_width=True)
-
 else:
-    st.info("👈 Configura los parámetros en el panel izquierdo y presiona **▶ Ejecutar** para ver los resultados.")
+    st.info("👆 Pedidos listos. Ahora presiona **🚀 Buscar ruta óptima** en el panel izquierdo.")
